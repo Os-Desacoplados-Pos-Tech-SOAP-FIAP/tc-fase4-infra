@@ -1,0 +1,100 @@
+name: Terraform Gateway
+
+# Stack do API Gateway — separada do cluster porque referencia o ALB interno e a
+# Lambda de auth, que só existem depois do deploy dos serviços. Apply é o ÚLTIMO da
+# subida e o destroy é o PRIMEIRO da descida.
+#   ci     -> PR e push na main: fmt + init (sem backend) + validate. Sem AWS: o plan
+#             depende do ALB e do state da auth, que só existem na Etapa 8.
+#   deploy -> SÓ por workflow_dispatch (plan | apply | destroy), com aprovação no
+#             environment `aws-infra`.
+#
+# O job tem o mesmo nome (`ci`) do workflow da raiz: um PR que só mexe no gateway não
+# dispara o workflow da raiz, e assim o check obrigatório `ci` continua sendo reportado.
+on:
+  pull_request:
+    branches: [main]
+    paths: ['gateway/**', '.github/workflows/terraform-gateway.yml']
+  push:
+    branches: [main]
+    paths: ['gateway/**', '.github/workflows/terraform-gateway.yml']
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Ação do Terraform'
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+
+permissions:
+  id-token: write # OIDC: o job troca este token por credenciais AWS temporárias
+  contents: read
+
+concurrency:
+  group: terraform-gateway-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ROLE_ARN: arn:aws:iam::538880133939:role/gha-tc-fase4-infra
+
+jobs:
+  ci:
+    name: ci
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform -chdir=gateway fmt -check -recursive
+
+      - name: Terraform init (sem backend)
+        run: terraform -chdir=gateway init -backend=false -input=false
+
+      - name: Terraform validate
+        run: terraform -chdir=gateway validate
+
+  deploy:
+    name: Deploy (${{ inputs.action }}) - requer aprovação
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # Gate de custo: o job fica em "Review deployments" até um revisor aprovar.
+    environment: aws-infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credenciais AWS via OIDC (sem secrets)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform -chdir=gateway init -input=false
+
+      - name: Terraform plan
+        if: inputs.action == 'plan'
+        run: |
+          terraform -chdir=gateway plan -no-color -input=false | tee plan.txt
+          {
+            echo '## Terraform plan'
+            echo '```'
+            tail -n 80 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform apply
+        if: inputs.action == 'apply'
+        run: terraform -chdir=gateway apply -auto-approve -input=false
+
+      - name: Terraform destroy
+        if: inputs.action == 'destroy'
+        run: terraform -chdir=gateway destroy -auto-approve -input=false
