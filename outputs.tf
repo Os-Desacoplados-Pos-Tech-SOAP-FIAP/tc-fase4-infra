@@ -74,3 +74,30 @@ output "alb_security_group_id" {
   description = "SG do ALB interno (anotação alb.ingress.kubernetes.io/security-groups dos Ingress)."
   value       = aws_security_group.alb.id
 }
+
+# --- API Gateway (URL pública conhecida antes do deploy dos serviços) ---
+
+output "api_id" {
+  description = "ID do API Gateway HTTP (consumido pela stack gateway/)."
+  value       = aws_apigatewayv2_api.this.id
+}
+
+output "api_endpoint" {
+  description = "URL pública do API Gateway (único ponto de entrada da aplicação)."
+  value       = aws_apigatewayv2_api.this.api_endpoint
+}
+
+output "api_execution_arn" {
+  description = "Execution ARN do API Gateway (source_arn das permissões das Lambdas)."
+  value       = aws_apigatewayv2_api.this.execution_arn
+}
+
+output "public_base_url" {
+  description = "Base pública dos links enviados ao cliente (PUBLIC_BASE_URL do Billing)."
+  value       = aws_apigatewayv2_api.this.api_endpoint
+}
+
+output "mercadopago_webhook_url" {
+  description = "URL de notificação do Mercado Pago (MP_NOTIFICATION_URL do Billing)."
+  value       = "${aws_apigatewayv2_api.this.api_endpoint}/api/billing/webhooks/mercadopago?source_news=webhooks"
+}

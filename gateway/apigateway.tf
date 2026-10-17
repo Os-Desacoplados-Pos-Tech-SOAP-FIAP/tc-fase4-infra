@@ -1,25 +1,18 @@
-resource "aws_apigatewayv2_api" "this" {
-  name          = "${var.project_name}-gateway"
-  protocol_type = "HTTP"
-}
-
-resource "aws_apigatewayv2_stage" "default" {
-  api_id      = aws_apigatewayv2_api.this.id
-  name        = "$default"
-  auto_deploy = true
-}
+# Integrações, rotas, authorizer e VPC Link do API Gateway HTTP. A API e o stage
+# `$default` (auto_deploy) são da stack raiz (apigateway.tf), para que a URL pública
+# exista antes do deploy dos serviços; aqui só são lidos `api_id` e `api_execution_arn`.
 
 # --- /auth -> Lambda de autenticação por CPF ---
 
 resource "aws_apigatewayv2_integration" "auth_lambda" {
-  api_id                 = aws_apigatewayv2_api.this.id
+  api_id                 = local.api_id
   integration_type       = "AWS_PROXY"
   integration_uri        = data.terraform_remote_state.auth.outputs.auth_invoke_arn
   payload_format_version = "2.0"
 }
 
 resource "aws_apigatewayv2_route" "auth" {
-  api_id    = aws_apigatewayv2_api.this.id
+  api_id    = local.api_id
   route_key = "POST /auth"
   target    = "integrations/${aws_apigatewayv2_integration.auth_lambda.id}"
 }
@@ -29,13 +22,13 @@ resource "aws_lambda_permission" "auth" {
   action        = "lambda:InvokeFunction"
   function_name = data.terraform_remote_state.auth.outputs.auth_function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.this.execution_arn}/*/*"
+  source_arn    = "${local.api_execution_arn}/*/*"
 }
 
 # --- Authorizer (JWT do cliente, perfil CLIENTE) ---
 
 resource "aws_apigatewayv2_authorizer" "cliente" {
-  api_id                            = aws_apigatewayv2_api.this.id
+  api_id                            = local.api_id
   authorizer_type                   = "REQUEST"
   authorizer_payload_format_version = "2.0"
   enable_simple_responses           = true
@@ -50,7 +43,7 @@ resource "aws_lambda_permission" "authorizer" {
   action        = "lambda:InvokeFunction"
   function_name = data.terraform_remote_state.auth.outputs.authorizer_function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.this.execution_arn}/authorizers/${aws_apigatewayv2_authorizer.cliente.id}"
+  source_arn    = "${local.api_execution_arn}/authorizers/${aws_apigatewayv2_authorizer.cliente.id}"
 }
 
 # --- Rede privada: VPC Link -> ALB interno ---
@@ -99,7 +92,7 @@ resource "aws_apigatewayv2_vpc_link" "this" {
 # overwrite:path = $request.path deixa isso explícito e evita que um stage nomeado
 # prefixe o caminho (a doc da AWS indica esse mapeamento para remover o stage).
 resource "aws_apigatewayv2_integration" "alb" {
-  api_id                 = aws_apigatewayv2_api.this.id
+  api_id                 = local.api_id
   integration_type       = "HTTP_PROXY"
   integration_method     = "ANY"
   connection_type        = "VPC_LINK"
@@ -116,7 +109,7 @@ resource "aws_apigatewayv2_integration" "alb" {
 
 # Área do cliente no OS: exige o JWT de cliente emitido pela Lambda (authorizer).
 resource "aws_apigatewayv2_route" "os_publico" {
-  api_id             = aws_apigatewayv2_api.this.id
+  api_id             = local.api_id
   route_key          = "ANY /api/os/publico/{proxy+}"
   target             = "integrations/${aws_apigatewayv2_integration.alb.id}"
   authorization_type = "CUSTOM"
@@ -126,7 +119,7 @@ resource "aws_apigatewayv2_route" "os_publico" {
 # Rota interna do OS (usada só pela Lambda, que chama o ALB direto pela VPC):
 # AWS_IAM exige assinatura SigV4, então quem vem de fora recebe 403.
 resource "aws_apigatewayv2_route" "os_internal" {
-  api_id             = aws_apigatewayv2_api.this.id
+  api_id             = local.api_id
   route_key          = "ANY /api/os/internal/{proxy+}"
   target             = "integrations/${aws_apigatewayv2_integration.alb.id}"
   authorization_type = "AWS_IAM"
@@ -136,7 +129,7 @@ resource "aws_apigatewayv2_route" "os_internal" {
 # /api/billing/publico/* (link do e-mail, token na query) e /api/billing/webhooks/*
 # (assinatura do Mercado Pago), que não passam por authorizer.
 resource "aws_apigatewayv2_route" "catch_all" {
-  api_id    = aws_apigatewayv2_api.this.id
+  api_id    = local.api_id
   route_key = "ANY /{proxy+}"
   target    = "integrations/${aws_apigatewayv2_integration.alb.id}"
 }

@@ -4,7 +4,9 @@ Infraestrutura compartilhada do Tech Challenge — Fase 4 (FIAP Pós Arquitetura
 **VPC** (3 AZs, NAT único), **EKS** (node group `t3.medium` min 2 / desired 3 / max 5, IRSA, access entries para as
 esteiras dos 4 serviços), **AWS Load Balancer Controller**, **Grafana Alloy** (opcional),
 **ECR** (um repositório por serviço), **segredos compartilhados** no Secrets Manager e o
-**API Gateway HTTP** (stack `gateway/`), única entrada pública da aplicação.
+**API Gateway HTTP**, única entrada pública da aplicação. A API e o stage ficam na stack
+raiz (a URL existe já no primeiro apply); integrações, rotas, authorizer e VPC Link ficam na
+stack `gateway/`.
 
 Terraform ≥ 1.10, state remoto em S3 (`tc-fase4-tfstate-538880133939`, lock nativo
 `use_lockfile`). Cópia evoluída de `tc-infra-kubernetes` da Fase 3.
@@ -50,9 +52,13 @@ sem o prefixo da rota, por isso eram duas integrações. A integração também 
 `overwrite:path = $request.path`, como a documentação da AWS indica para evitar que o nome de
 um stage seja prefixado ao caminho (aqui o stage é `$default`).
 
-Outputs do gateway: `api_endpoint`, `public_base_url` (vai no `PUBLIC_BASE_URL` do Billing) e
-`webhook_url` (`<api>/api/billing/webhooks/mercadopago?source_news=webhooks`, vai no
-`MP_NOTIFICATION_URL`).
+**A URL pública vem da stack raiz.** A API (`aws_apigatewayv2_api`) e o stage `$default` com
+`auto_deploy` são criados em `apigateway.tf` da raiz, para que a URL exista antes do deploy dos
+serviços: o Billing precisa dela no `PUBLIC_BASE_URL` (link do e-mail) e no
+`MP_NOTIFICATION_URL` (webhook do Mercado Pago). A stack `gateway/` lê `api_id` e
+`api_execution_arn` do state da raiz e cria o resto; com `auto_deploy`, o stage publica essas
+rotas sozinho. Os outputs do `gateway/` (`api_endpoint`, `public_base_url`,
+`mercadopago_webhook_url`) só repassam os da raiz.
 
 ## Contrato para os serviços
 
@@ -96,7 +102,10 @@ Outputs da stack raiz usados por outros repos (via `terraform_remote_state`, key
 `infra/terraform.tfstate`): `vpc_id`, `vpc_cidr`, `private_subnets`,
 `node_security_group_id`, `cluster_name`, `cluster_endpoint`, `oidc_provider_arn`,
 `ecr_repository_urls`, `jwt_secret_name`/`_arn`, `internal_token_secret_name`/`_arn`,
-`ingress_group_name`, `alb_security_group_id`.
+`ingress_group_name`, `alb_security_group_id`, `api_id`, `api_endpoint`, `api_execution_arn`,
+`public_base_url` (= `api_endpoint`, vai no `PUBLIC_BASE_URL` do Billing) e
+`mercadopago_webhook_url` (`<api_endpoint>/api/billing/webhooks/mercadopago?source_news=webhooks`,
+vai no `MP_NOTIFICATION_URL` do Billing).
 
 ## Segredos
 
@@ -119,18 +128,25 @@ mais recentes e `force_delete` (ambiente de estudo).
 
 ## Ordem de subida (descida = inversa)
 
-1. `tc-fase4-infra` (esta stack raiz: VPC, EKS, addons, ECR, segredos, Alloy)
+1. `tc-fase4-infra` (esta stack raiz: VPC, EKS, addons, ECR, segredos, Alloy e a API do
+   gateway, sem rotas. A URL pública já existe aqui e vai para o Billing)
 2. Terraform de catalog, billing e execution
 3. Terraform do os (assina os tópicos)
 4. CD dos 4 serviços (os Ingress criam o ALB interno)
 5. `tc-fase4-auth` (precisa do ALB e do SG dele)
-6. `tc-fase4-infra/gateway` (precisa do ALB e das Lambdas)
+6. `tc-fase4-infra/gateway` (integrações e rotas; precisa do ALB, das Lambdas e da API da raiz)
 
 Na descida: `gateway` → `auth` → **remover os Ingress dos serviços** (o controller apaga o
 ALB, os target groups e os SGs dele) → Terraform dos serviços → stack raiz. O destroy da raiz
 tem um passo de limpeza que remove ALB, target groups e SGs que sobrarem com a tag
 `elbv2.k8s.aws/cluster=oficina-fase4`, mas ele é rede de segurança: com os Ingress ainda no
 cluster, o controller recria o ALB.
+
+**O gateway é destruído antes da stack raiz.** O destroy da raiz apaga a API, e com ela as
+rotas e integrações criadas pela stack `gateway/`; se o gateway ainda estiver no ar, o state
+dele fica apontando para recursos que não existem mais e o VPC Link e o SG dele seguram a
+VPC. Não há dependência circular: a raiz não lê nenhum state; `gateway/` lê os states da raiz
+e da auth, e a auth lê só o da raiz.
 
 ## Esteira (CI/CD)
 
@@ -182,6 +198,8 @@ em janelas de teste e no dia da gravação.
 - 4 repositórios ECR com lifecycle (antes um só, sem lifecycle).
 - `JWT_SECRET` e `INTERNAL_SERVICE_TOKEN` gerados aqui (novo).
 - SG do ALB gerenciado pelo Terraform (novo).
+- API e stage do gateway na stack raiz, para a URL pública existir antes do deploy dos
+  serviços (antes: tudo na stack `gateway/`).
 - Sem apply no push para a `main`; apply/destroy só por `workflow_dispatch`.
 - Limpeza do destroy por tag do cluster, e não pelo prefixo do nome do ALB.
 

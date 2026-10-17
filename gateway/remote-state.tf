@@ -28,6 +28,8 @@ locals {
   cluster_name          = data.terraform_remote_state.infra.outputs.cluster_name
   ingress_group_name    = data.terraform_remote_state.infra.outputs.ingress_group_name
   alb_security_group_id = data.terraform_remote_state.infra.outputs.alb_security_group_id
+  api_id                = data.terraform_remote_state.infra.outputs.api_id
+  api_execution_arn     = data.terraform_remote_state.infra.outputs.api_execution_arn
 }
 
 # ALB interno único criado pelo IngressGroup `oficina-fase4` (Ingress dos 4 serviços).
