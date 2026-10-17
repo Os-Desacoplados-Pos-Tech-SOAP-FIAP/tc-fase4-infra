@@ -5,3 +5,6 @@
 *.tfvars.json
 crash.log
 crash.*.log
+.env
+.env.*
+!.env.example
