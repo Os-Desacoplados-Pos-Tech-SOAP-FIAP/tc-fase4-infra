@@ -12,6 +12,10 @@
 # As regras são recursos separados (e não blocos inline) porque as outras stacks
 # adicionam regras neste mesmo SG; com blocos inline o Terraform removeria essas
 # regras a cada apply.
+#
+# Nenhuma regra de entrada é criada aqui: o ALB só aceita a porta 80 vinda do SG do
+# VPC Link e do SG da Lambda. Health checks e tráfego para os pods saem pelo egress
+# e entram nos nodes pelas regras de backend do controller.
 locals {
   ingress_group_name = "oficina-fase4"
 }
@@ -24,15 +28,6 @@ resource "aws_security_group" "alb" {
   tags = {
     Name = "${var.cluster_name}-alb"
   }
-}
-
-resource "aws_vpc_security_group_ingress_rule" "alb_http_vpc" {
-  security_group_id = aws_security_group.alb.id
-  description       = "HTTP a partir da VPC"
-  cidr_ipv4         = var.vpc_cidr
-  ip_protocol       = "tcp"
-  from_port         = 80
-  to_port           = 80
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_all" {

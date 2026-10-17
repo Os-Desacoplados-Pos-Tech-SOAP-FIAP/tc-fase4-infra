@@ -1,7 +1,7 @@
 # tc-fase4-infra
 
 Infraestrutura compartilhada do Tech Challenge — Fase 4 (FIAP Pós Arquitetura de Software):
-**VPC** (3 AZs, NAT único), **EKS** (3 nodes `t3.medium`, IRSA, access entries para as
+**VPC** (3 AZs, NAT único), **EKS** (node group `t3.medium` min 2 / desired 3 / max 5, IRSA, access entries para as
 esteiras dos 4 serviços), **AWS Load Balancer Controller**, **Grafana Alloy** (opcional),
 **ECR** (um repositório por serviço), **segredos compartilhados** no Secrets Manager e o
 **API Gateway HTTP** (stack `gateway/`), única entrada pública da aplicação.
@@ -76,6 +76,21 @@ O SG do ALB é gerenciado aqui (`alb.tf`), e não pelo controller, para que a La
 declarativa. Por isso as regras desse SG são recursos separados: blocos inline apagariam as
 regras das outras stacks a cada apply. Com `manage-backend-security-group-rules`, o
 controller libera o tráfego ALB → pods no SG dos nodes.
+
+**O ALB só aceita tráfego do gateway e da Lambda.** A stack raiz cria o SG sem nenhuma
+regra de entrada; não há liberação por CIDR da VPC. Quem precisar chegar ao ALB tem que
+ganhar uma regra própria. Chamadas entre serviços dentro do cluster (por exemplo, o
+`CATALOG_BASE_URL` do OS) usam o Service interno do Kubernetes e não passam pelo ALB.
+
+### Rede
+
+| SG | Regra | Origem / destino | Onde é criada |
+|---|---|---|---|
+| ALB (`oficina-fase4-alb`) | entrada TCP 80 | SG do VPC Link | `gateway/apigateway.tf` |
+| ALB (`oficina-fase4-alb`) | entrada TCP 80 | SG da Lambda `auth-cpf` | `tc-fase4-auth/terraform/lambda.tf` |
+| ALB (`oficina-fase4-alb`) | saída total | pods (via regras de backend no SG dos nodes) | `alb.tf` |
+| VPC Link (`oficina-fase4-vpc-link`) | saída TCP 80 | CIDR da VPC | `gateway/apigateway.tf` |
+| Nodes | entrada nas portas dos pods | SG de backend do controller | AWS Load Balancer Controller |
 
 Outputs da stack raiz usados por outros repos (via `terraform_remote_state`, key
 `infra/terraform.tfstate`): `vpc_id`, `vpc_cidr`, `private_subnets`,
@@ -163,7 +178,7 @@ em janelas de teste e no dia da gravação.
   gateway com **VPC Link** (antes: integração HTTP pública no DNS do ALB).
 - Uma integração do gateway no lugar de duas; rota `/api/os/internal/*` bloqueada com
   `AWS_IAM`; authorizer em `/api/os/publico/*` (antes `/api/publico/*`).
-- 3 nodes (antes 2); access entries para as 4 esteiras de serviço (antes uma só).
+- 3 nodes desejados, min 2 e max 5 (antes 2/2/5); access entries para as 4 esteiras de serviço (antes uma só).
 - 4 repositórios ECR com lifecycle (antes um só, sem lifecycle).
 - `JWT_SECRET` e `INTERNAL_SERVICE_TOKEN` gerados aqui (novo).
 - SG do ALB gerenciado pelo Terraform (novo).
