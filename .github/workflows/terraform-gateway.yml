@@ -59,7 +59,7 @@ jobs:
         run: terraform -chdir=gateway validate
 
   deploy:
-    name: Deploy (${{ inputs.action }}) - requer aprovação
+    name: deploy
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # Gate de custo: o job fica em "Review deployments" até um revisor aprovar.
