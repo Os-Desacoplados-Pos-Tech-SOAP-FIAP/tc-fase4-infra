@@ -1,0 +1,156 @@
+name: Terraform
+
+# Esteira da stack raiz (VPC, EKS, addons, ECR, segredos, observabilidade):
+#   ci     -> PR e push na main: fmt + init + validate + plan. Não altera nada.
+#   deploy -> SÓ por workflow_dispatch (plan | apply | destroy), com aprovação no
+#             environment `aws-infra`. Diferente da Fase 3, merge na main NÃO faz
+#             apply: subir a infra é sempre uma decisão explícita (custo).
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore: ['gateway/**', '.github/workflows/terraform-gateway.yml']
+  push:
+    branches: [main]
+    paths-ignore: ['gateway/**', '.github/workflows/terraform-gateway.yml']
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Ação do Terraform'
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+
+permissions:
+  id-token: write # OIDC: o job troca este token por credenciais AWS temporárias
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ROLE_ARN: arn:aws:iam::538880133939:role/gha-tc-fase4-infra
+  CLUSTER_NAME: oficina-fase4
+  # Sem os secrets do Grafana Cloud as variáveis ficam vazias e a observabilidade
+  # não é criada (count = 0 em observability.tf); plan e apply seguem funcionando.
+  TF_VAR_grafana_cloud_otlp_endpoint: ${{ secrets.GRAFANA_CLOUD_OTLP_ENDPOINT }}
+  TF_VAR_grafana_cloud_instance_id: ${{ secrets.GRAFANA_CLOUD_INSTANCE_ID }}
+  TF_VAR_grafana_cloud_token: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+
+jobs:
+  ci:
+    name: ci
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credenciais AWS via OIDC (sem secrets)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: |
+          terraform plan -no-color -input=false | tee plan.txt
+          {
+            echo '## Terraform plan'
+            echo '```'
+            tail -n 80 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: deploy
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # Gate de custo: o job fica em "Review deployments" até um revisor aprovar.
+    environment: aws-infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credenciais AWS via OIDC (sem secrets)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        if: inputs.action == 'plan'
+        run: |
+          terraform plan -no-color -input=false | tee plan.txt
+          {
+            echo '## Terraform plan'
+            echo '```'
+            tail -n 80 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform apply
+        if: inputs.action == 'apply'
+        run: terraform apply -auto-approve -input=false
+
+      - name: Remove recursos órfãos do Ingress antes do destroy
+        if: inputs.action == 'destroy'
+        # Rede de segurança: o certo é remover os Ingress dos serviços ANTES (o
+        # controller apaga ALB, target groups e SGs). O que sobrar foi criado em
+        # runtime pelo AWS Load Balancer Controller, está FORA do state e trava a
+        # exclusão da VPC. Tudo é localizado pela tag elbv2.k8s.aws/cluster.
+        run: |
+          for ALB in $(aws resourcegroupstaggingapi get-resources \
+            --resource-type-filters elasticloadbalancing:loadbalancer \
+            --tag-filters Key=elbv2.k8s.aws/cluster,Values="$CLUSTER_NAME" \
+            --query 'ResourceTagMappingList[].ResourceARN' --output text); do
+            echo "Removendo ALB orfao: $ALB"
+            aws elbv2 delete-load-balancer --load-balancer-arn "$ALB"
+            sleep 30
+          done
+          for TG in $(aws resourcegroupstaggingapi get-resources \
+            --resource-type-filters elasticloadbalancing:targetgroup \
+            --tag-filters Key=elbv2.k8s.aws/cluster,Values="$CLUSTER_NAME" \
+            --query 'ResourceTagMappingList[].ResourceARN' --output text); do
+            aws elbv2 delete-target-group --target-group-arn "$TG" || true
+          done
+          # O SG de backend do controller é referenciado por regras no SG dos nodes;
+          # sem revogar essas regras antes, o delete falha com DependencyViolation.
+          NODE_SG=$(terraform output -raw node_security_group_id 2>/dev/null || true)
+          for SG in $(aws ec2 describe-security-groups \
+            --filters Name=tag:elbv2.k8s.aws/cluster,Values="$CLUSTER_NAME" \
+            --query 'SecurityGroups[].GroupId' --output text); do
+            if [ -n "$NODE_SG" ]; then
+              for RULE in $(aws ec2 describe-security-group-rules \
+                --filters Name=group-id,Values="$NODE_SG" \
+                --query "SecurityGroupRules[?ReferencedGroupInfo.GroupId=='$SG'].SecurityGroupRuleId" \
+                --output text); do
+                aws ec2 revoke-security-group-ingress --group-id "$NODE_SG" --security-group-rule-ids "$RULE" || true
+              done
+            fi
+            echo "Removendo security group orfao: $SG"
+            aws ec2 delete-security-group --group-id "$SG" || true
+          done
+
+      - name: Terraform destroy
+        if: inputs.action == 'destroy'
+        run: terraform destroy -auto-approve -input=false
