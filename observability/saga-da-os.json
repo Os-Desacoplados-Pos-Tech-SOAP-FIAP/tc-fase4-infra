@@ -118,7 +118,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(increase(saga_iniciadas_total[$__range])) or vector(0)",
+          "expr": "round(sum(increase(saga_iniciadas_total[$__range]))) or vector(0)",
           "legendFormat": "iniciadas",
           "instant": true,
           "range": false
@@ -182,7 +182,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(increase(saga_concluidas_total[$__range])) or vector(0)",
+          "expr": "round(sum(increase(saga_concluidas_total[$__range]))) or vector(0)",
           "legendFormat": "concluídas",
           "instant": true,
           "range": false
@@ -250,7 +250,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(increase(saga_compensacoes_total[$__range])) or vector(0)",
+          "expr": "round(sum(increase(saga_compensacoes_total[$__range]))) or vector(0)",
           "legendFormat": "compensadas",
           "instant": true,
           "range": false
@@ -466,7 +466,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (motivo) (increase(saga_compensacoes_total[$__range]))",
+          "expr": "round(sum by (motivo) (increase(saga_compensacoes_total[$__range])))",
           "legendFormat": "{{motivo}}",
           "instant": true,
           "range": false
