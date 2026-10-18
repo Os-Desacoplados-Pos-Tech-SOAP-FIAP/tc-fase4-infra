@@ -163,6 +163,7 @@ Autenticação via **OIDC** (role `gha-tc-fase4-infra`), sem access key no repo.
 Observabilidade: o Alloy (chart `k8s-monitoring`) só é instalado quando os secrets
 `GRAFANA_CLOUD_OTLP_ENDPOINT`, `GRAFANA_CLOUD_INSTANCE_ID` e `GRAFANA_CLOUD_TOKEN` existem no
 repo. Sem eles, `plan` e `apply` funcionam e a observabilidade fica desligada.
+Credenciais, dashboard **Saga da OS** e alertas: [observability/README.md](observability/README.md).
 
 ## Como rodar
 
