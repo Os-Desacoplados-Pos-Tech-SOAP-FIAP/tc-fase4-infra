@@ -68,18 +68,18 @@ kubectl get pods -n observability   # alloy-metrics, alloy-logs e alloy-receiver
 | Prometheus | `saga_iniciadas_total` | contador com `job="tc-fase4-os"` |
 | Prometheus | `mensagens_processadas_total` | uma série por `job`, `tipo` e `resultado` |
 | Tempo | `{ resource.service.name = "tc-fase4-os" }` | traces com spans dos 4 serviços |
-| Loki | `{namespace="os"} \| json` | logs JSON com `trace_id` |
+| Loki | `{k8s_namespace_name="os"} \| json` | logs JSON com `trace_id` |
 
 ## 3. Importar o dashboard
 
 O mesmo JSON serve no Grafana Cloud e no compose local: as fontes de dados são variáveis do
-tipo *datasource* (`DS_PROMETHEUS`, `DS_TEMPO`), sem `__inputs`. Cada uma assume a primeira
+tipo *datasource* (`DS_PROMETHEUS`, `DS_TEMPO`, `DS_LOKI`), sem `__inputs`. Cada uma assume a primeira
 fonte do tipo e pode ser trocada no topo do dashboard.
 
 **Pela interface:** **Dashboards → New → Import**, cole o conteúdo de `saga-da-os.json` (ou
 faça upload do arquivo) → **Load** → escolha a pasta → **Import**. Depois, no topo do dashboard,
-confira se *Prometheus* aponta para `grafanacloud-<stack>-prom` e *Tempo* para
-`grafanacloud-<stack>-traces`.
+confira se *Prometheus* aponta para `grafanacloud-<stack>-prom`, *Tempo* para
+`grafanacloud-<stack>-traces` e *Logs* para `grafanacloud-<stack>-logs`.
 
 **Pela API** (token de *service account* com papel Editor, criado em **Administration →
 Users and access → Service accounts**):
@@ -111,8 +111,11 @@ no Grafana, exporte de volta (**Share → Export → Save to file**) e atualize 
 | HTTP: latência p95 | Time series | `histogram_quantile(0.95, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{job=~"tc-fase4-.*"}[$__rate_interval])))` |
 | Traces recentes do OS | Tabela (Tempo) | `{ resource.service.name = "tc-fase4-os" }` |
 | Traces da OS selecionada | Tabela (Tempo) | `{ span.oficina.os_id = "$os_id" }` (variável **OS (id)** no topo) |
+| Mensagens da saga (quem consumiu o quê) | Logs (Loki) | `{k8s_namespace_name=~"os\|catalog\|billing\|execution"} \|= "Mensagem processada" \| json \| __error__="" \| osId=~"${os_id}.*"` + `line_format` ("serviço consumiu tipo") |
 
 Notas sobre as consultas:
+
+- **Logs no Grafana Cloud:** o destino do Alloy é OTLP, então o namespace vira o label `k8s_namespace_name` (não `namespace`). Cada linha chega duas vezes: pelo stdout do pod (JSON) e pela instrumentação pino do OpenTelemetry; o `__error__=""` depois do `json` fica só com a do stdout.
 
 - `job` é o `service.name` de cada serviço (`tc-fase4-os`, `tc-fase4-catalog`,
   `tc-fase4-billing`, `tc-fase4-execution`).
@@ -189,11 +192,11 @@ reserva, execução, cobrança. No dashboard, preencha a variável **OS (id)** e
 **Do log para o trace.** Os logs do pino têm `trace_id` e `span_id`. No Loki:
 
 ```logql
-{namespace="os"} | json | trace_id="<trace-id>"
+{k8s_namespace_name="os"} | json | trace_id="<trace-id>"
 ```
 
 Para achar o `trace_id` a partir de uma OS, filtre o texto do id
-(`{namespace=~"os|catalog|billing|execution"} |= "<id-da-os>" | json`) e copie o `trace_id`
+(`{k8s_namespace_name=~"os|catalog|billing|execution"} |= "<id-da-os>" | json`) e copie o `trace_id`
 da linha; depois abra no Tempo (Explore → Tempo → *TraceQL* → cole o id). Se o label
 `namespace` não aparecer no seu stack, use o *Label browser* do Loki (com OTLP ele pode vir
 como `k8s_namespace_name` ou `service_name`).

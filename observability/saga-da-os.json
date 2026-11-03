@@ -47,6 +47,17 @@
         "options": []
       },
       {
+        "name": "DS_LOKI",
+        "label": "Logs",
+        "type": "datasource",
+        "query": "loki",
+        "current": {},
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "options": []
+      },
+      {
         "name": "os_id",
         "label": "OS (id)",
         "type": "textbox",
@@ -326,6 +337,43 @@
       ]
     },
     {
+      "id": 16,
+      "type": "logs",
+      "title": "Mensagens da saga (quem consumiu o quê)",
+      "description": "Cada linha é uma mensagem SNS/SQS consumida: o serviço à esquerda consumiu o evento ou comando (o prefixo do tipo é quem publicou). Filtra pela OS do campo os_id; vazio mostra todas.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${DS_LOKI}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${DS_LOKI}"
+          },
+          "queryType": "range",
+          "expr": "{k8s_namespace_name=~\"os|catalog|billing|execution\"} |= \"Mensagem processada\" | json | __error__=\"\" | osId=~\"${os_id}.*\" | line_format \"{{.k8s_namespace_name}} consumiu {{.type}}   (OS {{.osId}})\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Ascending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false
+      }
+    },
+    {
       "id": 5,
       "type": "timeseries",
       "title": "Funil da saga",
@@ -336,7 +384,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 4,
+        "y": 14,
         "w": 12,
         "h": 8
       },
@@ -418,7 +466,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 4,
+        "y": 14,
         "w": 12,
         "h": 8
       },
@@ -484,7 +532,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 22,
         "w": 12,
         "h": 8
       },
@@ -550,7 +598,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 22,
         "w": 12,
         "h": 8
       },
@@ -616,7 +664,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 30,
         "w": 12,
         "h": 8
       },
@@ -676,7 +724,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 30,
         "w": 12,
         "h": 8
       },
@@ -737,7 +785,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 38,
         "w": 12,
         "h": 8
       },
@@ -798,7 +846,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 28,
+        "y": 38,
         "w": 12,
         "h": 8
       },
@@ -853,7 +901,7 @@
       "title": "Como achar os traces de uma OS",
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 46,
         "w": 24,
         "h": 4
       },
@@ -873,7 +921,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 50,
         "w": 12,
         "h": 10
       },
@@ -913,7 +961,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 40,
+        "y": 50,
         "w": 12,
         "h": 10
       },
